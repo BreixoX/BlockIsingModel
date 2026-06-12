@@ -4,9 +4,6 @@ venv/
 env/
 ENV/
 
-# Output files
-outputs/
-
 # Python
 __pycache__/
 *.py[cod]
