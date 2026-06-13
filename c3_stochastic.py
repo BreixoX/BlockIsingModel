@@ -8,9 +8,12 @@ Toral (numero de coordinacion 4, Tc^MF = 4; anexos SM3-SM5).
 
   (a) <tau> vs D a T fija (estilo Naskar: tau decrece con D), tres modelos de
       igual Tc = J_medio = 4: Curie-Weiss, bloque J12=3.2 (base), bloque J12=1.6.
-  (b) Diagrama (D,T): fronteras soft-ferro / ferro para una familia de tau_max,
-      extraidas de la malla <tau>(D,T) como el contorno <tau> = tau_max
-      (analogo a la Fig. SM5 de Toral).
+  (b) Diagrama (D,T): frontera soft-ferro / ferro para una familia de tau_max,
+      obtenida con el procedimiento de Toral (Fig. 4 / Fig. SM5): para cada D y
+      cada tau_max se busca la PRIMERA temperatura a la que el sistema logra
+      invertir (de m=-1 a m>=0) en menos de tau_max MCS. Esa temperatura es la
+      frontera; por debajo el sistema es ferromagnetico (no invierte en tau_max,
+      region ferro), por encima es soft-ferromagnetico (si invierte).
 
 Definicion de tau: primer paso, tau = inf{t : m(t) >= 0 | m(0) = -1}.
 """
@@ -53,7 +56,7 @@ def mean_tau(params, D, tau_max, n_sim, seed=1):
 
 
 # --------------------------------------------------------------------------
-#  (a) <tau> vs D
+#  (a) <tau> vs D                                          (sin cambios)
 # --------------------------------------------------------------------------
 
 def sweep_D_configs(D_values, N, T_frac, tau_max, n_sim):
@@ -67,61 +70,110 @@ def sweep_D_configs(D_values, N, T_frac, tau_max, n_sim):
 
 
 # --------------------------------------------------------------------------
-#  (b) malla <tau>(D,T) y extraccion de fronteras
+#  (b) frontera soft-ferro / ferro segun el procedimiento de Toral
 # --------------------------------------------------------------------------
+#
+#  Idea clave (eficiencia): una unica simulacion de longitud tau_big = max(
+#  tau_family) devuelve el tiempo de inversion tau de cada realizacion. Para
+#  CUALQUIER tau_max <= tau_big, "invierte en menos de tau_max" equivale a
+#  "(invirtio) y (tau <= tau_max)". Asi se resuelve toda la familia de tau_max
+#  con un solo barrido. Para cada (D, T) se estima la probabilidad de inversion
+#  en tau_max con R realizaciones; la frontera T*(D) es la temperatura a la que
+#  esa probabilidad cruza 1/2.
+#
+#  El barrido en T se hace DE ARRIBA (cerca de Tc) HACIA ABAJO y se detiene poco
+#  despues de que ni el mayor tau_max consiga invertir: esto acota el numero de
+#  simulaciones censuradas (las caras, de longitud completa) a unas pocas por D.
 
-def grid_tau(D_grid, T_grid, N, cap, n_sim):
-    """<tau> en cada (D,T); inf donde se censura (regimen ferromagnetico)."""
-    G = np.full((len(T_grid), len(D_grid)), np.inf)
-    for i, T in enumerate(T_grid):
-        for j, D in enumerate(D_grid):
-            m, _ = mean_tau(block_params(N, T), D, cap, n_sim)
-            if np.isfinite(m):
-                G[i, j] = m
-    return G
+def reversal_fracs(N, T, D, tau_big, R, tau_family, seed):
+    """Fraccion de R realizaciones que invierten en menos de cada tau_max."""
+    np.random.seed(seed)                       # reproducibilidad del campo
+    model = BlockIsingModel(block_params(N, T), seed=seed)
+    res = reversal_time_ensemble(model, gaussian_field(D), tau_big, R)
+    tau, rev = res['tau'], res['reversed']
+    return [float(np.mean(rev & (tau <= tm))) for tm in tau_family]
 
 
-def boundary(D_grid, tau_row, tau_max):
-    """D donde <tau>(D) cruza tau_max en una fila de T (<tau> decrece con D)."""
-    y = np.where(np.isfinite(tau_row), np.log(tau_row), np.inf)
-    t = np.log(tau_max)
-    for j in range(len(D_grid) - 1):
-        if y[j] >= t >= y[j + 1] and np.isfinite(y[j + 1]):
-            if np.isinf(y[j]):
-                return D_grid[j + 1]               # cruce contra zona censurada
-            f = (y[j] - t) / (y[j] - y[j + 1])
-            return D_grid[j] + f * (D_grid[j + 1] - D_grid[j])
+def scan_T_down(D, N, T_top, T_bot, dT, tau_family, R, seed0,
+                stop_eps=1e-9, stop_after=2):
+    """Barre T de T_top a T_bot midiendo p(invierte en tau_max) en cada T.
+    Se detiene stop_after pasos despues de que el mayor tau_max deje de
+    invertir (ya por debajo de todas las fronteras)."""
+    tau_family = sorted(tau_family)
+    tau_big = max(tau_family)
+    Ts, P = [], []
+    n_zero, T, seed = 0, T_top, seed0
+    while T >= T_bot - 1e-9:
+        fr = reversal_fracs(N, T, D, tau_big, R, tau_family, seed)
+        Ts.append(T); P.append(fr); seed += 1
+        if fr[-1] <= stop_eps:                 # mayor tau_max ya no invierte
+            n_zero += 1
+            if n_zero >= stop_after:
+                break
+        else:
+            n_zero = 0
+        T -= dT
+    return np.array(Ts), np.array(P)
+
+
+def crossing(Ts_asc, p_asc, level=0.5):
+    """T donde p(T) (creciente con T) cruza 'level'; None si no cruza."""
+    for i in range(len(Ts_asc) - 1):
+        a, b = p_asc[i], p_asc[i + 1]
+        if a < level <= b:
+            f = (level - a) / (b - a) if b != a else 0.0
+            return Ts_asc[i] + f * (Ts_asc[i + 1] - Ts_asc[i])
     return None
+
+
+def extract_boundaries(Ts, P, tau_family, level=0.5):
+    order = np.argsort(Ts)                      # ascendente en T
+    Ts, P = Ts[order], P[order]
+    return {tm: crossing(Ts, P[:, k], level)
+            for k, tm in enumerate(sorted(tau_family))}
+
+
+def compute_boundaries(D_grid, N, T_top, T_bot, dT, tau_family, R, seed0=1000):
+    """Para cada D y cada tau_max, T* de la frontera soft-ferro / ferro."""
+    tau_family = sorted(tau_family)
+    acc = {tm: ([], []) for tm in tau_family}
+    seed = seed0
+    for D in D_grid:
+        Ts, P = scan_T_down(D, N, T_top, T_bot, dT, tau_family, R, seed)
+        seed += 1000
+        bnd = extract_boundaries(Ts, P, tau_family)
+        for tm in tau_family:
+            if bnd[tm] is not None:
+                acc[tm][0].append(D); acc[tm][1].append(bnd[tm])
+    return {tm: (np.array(a), np.array(b)) for tm, (a, b) in acc.items()}
 
 
 # --------------------------------------------------------------------------
 #  Figura
 # --------------------------------------------------------------------------
 
-def make_figure(Dv, dC, T_a, D_grid, T_grid, G, tau_family, path):
-    fig, ax = plt.subplots(1, 2, figsize=(11, 4.2))
+def make_figure(Dv, dC, T_a, boundaries, path):
+    fig, ax = plt.subplots(1, 1, figsize=(6, 4.2))
 
-    a = ax[0]
+    a = ax
     for lab, (fac, sty) in CONFIGS.items():
         y, e = dC[lab]
         a.errorbar(Dv, y, yerr=e, fmt=sty, ms=4, capsize=2, label=lab)
     a.set_yscale('log'); a.set_xlabel('D'); a.set_ylabel(r'$\langle\tau\rangle$ (MCS)')
     a.set_title(f'(a) $\\langle\\tau\\rangle$ vs D   ($T={T_a:.2f}\\,T_c$)'); a.legend(fontsize=8)
 
-    b = ax[1]
-    for k, tm in enumerate(tau_family):
-        Ds, Ts = [], []
-        for i, T in enumerate(T_grid):
-            Db = boundary(D_grid, G[i], tm)
-            if Db is not None:
-                Ds.append(Db); Ts.append(T)
-        if Ds:
-            b.plot(Ds, Ts, 'o-', ms=4, color=f'C{k}',
-                   label=r'$\tau_{max}=10^{%d}$' % int(round(np.log10(tm))))
-    b.axhline(TC, color='k', ls='--', lw=1, label=r'$T_c^{MF}=4$')
-    b.set_xlim(0, 0.6); b.set_ylim(0, 4.2)
-    b.set_xlabel('D'); b.set_ylabel('T')
-    b.set_title('(b) diagrama (D,T): ferro (izq) / soft (der)'); b.legend(fontsize=8)
+    # Panel (b) comentado: frontera soft-ferro / ferro
+    # b = ax[1]
+    # for k, tm in enumerate(sorted(boundaries)):
+    #     Ds, Ts = boundaries[tm]
+    #     if len(Ds):
+    #         b.plot(Ds, Ts, 'o-', ms=4, color=f'C{k}',
+    #                label=r'$\tau_{max}=10^{%d}$' % int(round(np.log10(tm))))
+    # b.axhline(TC, color='k', ls='--', lw=1, label=r'$T_c^{MF}=4$')
+    # b.set_xlim(0, 0.6); b.set_ylim(0, 4.2)
+    # b.set_xlabel('D'); b.set_ylabel('T')
+    # b.set_title('(b) frontera: soft-ferro (arriba) / ferro (abajo)')
+    # b.legend(fontsize=8)
 
     fig.tight_layout()
     fig.savefig(path, dpi=130, bbox_inches='tight')
@@ -129,7 +181,7 @@ def make_figure(Dv, dC, T_a, D_grid, T_grid, G, tau_family, path):
 
 
 def main():
-    N = 200
+    N = 1000
     N_SIM = 1000           # subir en produccion (>= 1000 para ~3% de error)
 
     # --- (a) <tau> vs D ---
@@ -138,14 +190,14 @@ def main():
     Dv, dC = sweep_D_configs(linrange(*DA_RANGE), N=N, T_frac=T_A,
                              tau_max=20000, n_sim=N_SIM)
 
-    # --- (b) malla y fronteras ---
-    D_grid = linrange(0.05, 0.60, 9)
-    T_grid = linrange(2.0, 4.0, 9)
-    G = grid_tau(D_grid, T_grid, N=N, cap=1000000, n_sim=10)
-    TAU_FAMILY = [10000, 100000, 1000000]
+    # --- (b) frontera soft-ferro / ferro (procedimiento de Toral) 
+    #TAU_FAMILY = [10, 100, 1000, 10000, 100000]
+    #D_GRID = np.linspace(0.0, 0.6, 13)
+    # boundaries = compute_boundaries(
+    #     D_GRID, N=N, T_top=0.98 * TC, T_bot=0.1, dT=0.15,
+    #     tau_family=TAU_FAMILY, R=10)
 
-    make_figure(Dv, dC, T_A, D_grid, T_grid, G, TAU_FAMILY,
-                'outputs/c3_stochastic.png')
+    make_figure(Dv, dC, T_A, {}, 'outputs/c3_stochastic.png')
     print('Figura: c3_stochastic.png')
 
 

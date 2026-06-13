@@ -35,7 +35,6 @@ def pm_total(N, T, D, n_therm, n_steps, bins, seed=1):
     )
     res = magnetization_samples(model, field, n_therm, n_steps,
                                 record_every=1, m_init=0.0)
-    # m = np.concatenate([res['m_total'], -res['m_total']])
     m = np.concatenate([res['m_total']])
     dens, edges = np.histogram(m, bins=bins, range=(-1, 1), density=True)
     return 0.5 * (edges[:-1] + edges[1:]), dens

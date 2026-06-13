@@ -109,32 +109,33 @@ def sweep_p(p_values, N, T_frac, tau_max, n_sim):
 # --------------------------------------------------------------------------
 
 def make_figure(Tf, dT, Nv, dN, dJ, dp, path):
-    fig, ax = plt.subplots(2, 2, figsize=(11, 8))
+    fig, ax = plt.subplots(1, 3, figsize=(14, 4))
 
-    a = ax[0, 0]
+    a = ax[0]
     for lab, (fac, sty) in CONFIGS.items():
         a.errorbar(1 / Tf, dT[lab][0], yerr=dT[lab][1], fmt=sty, ms=4, capsize=2, label=lab)
     a.set_yscale('log'); a.set_xlabel(r'$T_c/T$'); a.set_ylabel(r'$\langle\tau\rangle$ (MCS)')
     a.set_title('(a) $\\langle\\tau\\rangle$ vs T '); a.legend(fontsize=8)
 
-    b = ax[0, 1]
+    b = ax[1]
     for lab, (fac, sty) in CONFIGS.items():
         b.errorbar(Nv, dN[lab][0], yerr=dN[lab][1], fmt=sty, ms=4, capsize=2, label=lab)
     b.set_yscale('log'); b.set_xlabel('N'); b.set_ylabel(r'$\langle\tau\rangle$ (MCS)')
     b.set_title('(b) $\\langle\\tau\\rangle$ vs N   [barrera $\\sim e^{cN}$]'); b.legend(fontsize=8)
 
-    c = ax[1, 0]
+    c = ax[2]
     for i, (Tf_c, (J12, tau, se)) in enumerate(sorted(dJ.items())):
         c.errorbar(J12, tau, yerr=se, fmt='o-', ms=4, capsize=2, color=f'C{i}',
                    label=f'$T={Tf_c:.2f}\\,T_c$')
     c.set_yscale('log'); c.set_xlabel(r'$J_{12}$'); c.set_ylabel(r'$\langle\tau\rangle$ (MCS)')
     c.set_title('(c) $\\langle\\tau\\rangle$ vs $J_{12}$  ($T_c,\\bar J$ fijos)'); c.legend(fontsize=8)
 
-    d = ax[1, 1]
-    for i, (lab, (pv, tau, se)) in enumerate(dp.items()):
-        d.errorbar(pv, tau, yerr=se, fmt='o-', ms=4, capsize=2, color=f'C{i+2}', label=lab)
-    d.set_yscale('log'); d.set_xlabel(r'$p$ (bloque 1)'); d.set_ylabel(r'$\langle\tau\rangle$ (MCS)')
-    d.set_title('(d) $\\langle\\tau\\rangle$ vs $p$'); d.legend(fontsize=8)
+    # # Panel (d) comentado: <tau> vs p
+    # d = ax[1, 1]
+    # for i, (lab, (pv, tau, se)) in enumerate(dp.items()):
+    #     d.errorbar(pv, tau, yerr=se, fmt='o-', ms=4, capsize=2, color=f'C{i+2}', label=lab)
+    # d.set_yscale('log'); d.set_xlabel(r'$p$ (bloque 1)'); d.set_ylabel(r'$\langle\tau\rangle$ (MCS)')
+    # d.set_title('(d) $\\langle\\tau\\rangle$ vs $p$'); d.legend(fontsize=8)
 
     fig.tight_layout()
     fig.savefig(path, dpi=130, bbox_inches='tight')
@@ -157,10 +158,12 @@ def main():
     Nv, dN = sweep_N(linrange(*N_RANGE), T_frac=0.88, tau_max=TAU_MAX, n_sim=N_SIM)
     dJ = sweep_J12(linrange(*J12_RANGE), N=200, T_fracs=T_J12,
                    tau_max=TAU_MAX, n_sim=N_SIM)
-    dp = sweep_p(linrange(*P_RANGE), N=200, T_frac=T_P,
-                 tau_max=TAU_MAX, n_sim=N_SIM)
+    
+    # Panel (d) comentado: barrido de p
+    # dp = sweep_p(linrange(*P_RANGE), N=200, T_frac=T_P,
+    #              tau_max=TAU_MAX, n_sim=N_SIM)
 
-    make_figure(Tf, dT, Nv, dN, dJ, dp, 'outputs/c1_reversal.png')
+    make_figure(Tf, dT, Nv, dN, dJ, {}, 'outputs/c1_reversal.png')
     print('Figura: c1_reversal.png')
 
 
